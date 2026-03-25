@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="manifest.json">
+    <title>VULCAN FRESH MOBILE</title>
+    <style>
+        :root { --bg: #0b0c10; --panel: #1f2833; --neon: #00f2ea; --purple: #7a00ff; --text: #ffffff; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 15px; display: flex; justify-content: center; }
+        .container { width: 100%; max-width: 450px; }
+        .header h1 { font-size: 28px; text-align: center; color: var(--neon); text-shadow: 0 0 10px var(--neon); text-transform: uppercase; margin: 10px 0; }
+        .box { background: var(--panel); border: 1px solid #333; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 5px 15px rgba(0,0,0,0.5); }
+        input { width: 100%; background: #000; border: 1px solid var(--neon); color: var(--neon); padding: 12px; border-radius: 4px; margin-bottom: 15px; box-sizing: border-box; font-family: monospace; font-size: 14px; text-align: center; }
+        .btn-row { display: flex; gap: 10px; }
+        button { flex: 1; padding: 14px; border: 1px solid #444; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; background: #151515; color: white; text-transform: uppercase; font-size: 12px; }
+        .btn-main { border-color: var(--neon); color: var(--neon); }
+        .btn-save { width: 100%; border-color: var(--purple); color: var(--purple); margin-top: 10px; }
+        .item { background: rgba(255,255,255,0.05); padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 3px solid var(--neon); cursor: pointer; }
+        .code-box { background: #000; border: 1px dashed var(--neon); padding: 10px; margin: 10px 0; display: flex; justify-content: space-between; align-items: center; border-radius: 4px; }
+        .hidden { display: none; }
+        #reader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 100; padding: 20px; box-sizing: border-box; overflow-y: auto; }
+    </style>
+</head>
+<body>
+
+<div class="container" id="main-view">
+    <div class="header"><h1>VULCAN FRESH</h1></div>
+    <div class="box">
+        <input type="text" id="mail-addr" readonly value="INITIALIZING...">
+        <div class="btn-row">
+            <button onclick="createNewAccount()">CHANGE</button>
+            <button class="btn-main" onclick="copyText(activeEmail)">COPY</button>
+        </div>
+        <button class="btn-save" onclick="saveSession()">💾 SAVE SESSION</button>
+    </div>
+    <h3 style="color: #666; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Saved Sessions</h3>
+    <div id="session-list"></div>
+</div>
+
+<div id="reader" class="hidden">
+    <button onclick="closeInbox()" style="color: var(--neon); margin-bottom: 20px; background:none; border:none; font-size:16px;">← BACK</button>
+    <h2 id="read-email-address" style="font-size: 14px; color: var(--neon); word-break: break-all;"></h2>
+    <button class="btn-main" style="width:100%; margin: 15px 0;" onclick="refreshInbox()">🔄 REFRESH INBOX</button>
+    <div id="message-list"></div>
+</div>
+
+<script>
+    const API = "https://api.mail.tm";
+    let activeEmail = "";
+    let activeToken = "";
+
+    window.onload = () => {
+        createNewAccount();
+        loadSessions();
+        if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js'); }
+    };
+
+    async function createNewAccount() {
+        document.getElementById('mail-addr').value = "GENERATING...";
+        const domainRes = await fetch(`${API}/domains`);
+        const domainData = await domainRes.json();
+        const domain = domainData["hydra:member"][0].domain;
+        const address = `vlc_${Math.random().toString(36).substring(7)}@${domain}`;
+        const password = "password67";
+
+        const res = await fetch(`${API}/accounts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address, password })
+        });
+
+        if (res.ok) {
+            activeEmail = address;
+            document.getElementById('mail-addr').value = address;
+            const tokenRes = await fetch(`${API}/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address, password })
+            });
+            const tokenData = await tokenRes.json();
+            activeToken = tokenData.token;
+        }
+    }
+
+    function saveSession() {
+        let sessions = JSON.parse(localStorage.getItem('v_sessions') || "[]");
+        if (!sessions.find(s => s.address === activeEmail)) {
+            sessions.push({ address: activeEmail, token: activeToken });
+            localStorage.setItem('v_sessions', JSON.stringify(sessions));
+            loadSessions();
+        }
+    }
+
+    function loadSessions() {
+        const list = document.getElementById('session-list');
+        const sessions = JSON.parse(localStorage.getItem('v_sessions') || "[]");
+        list.innerHTML = sessions.length ? "" : "<p style='color:#444; text-align:center;'>No saved sessions.</p>";
+        sessions.forEach(s => {
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<span onclick="openInbox('${s.address}', '${s.token}')">${s.address}</span>`;
+            list.appendChild(div);
+        });
+    }
+
+    async function openInbox(email, token) {
+        activeEmail = email;
+        activeToken = token;
+        document.getElementById('read-email-address').innerText = email;
+        document.getElementById('main-view').classList.add('hidden');
+        document.getElementById('reader').classList.remove('hidden');
+        refreshInbox();
+    }
+
+    async function refreshInbox() {
+        const list = document.getElementById('message-list');
+        list.innerHTML = "<p style='color:cyan; text-align:center;'>Fetching Messages...</p>";
+        const res = await fetch(`${API}/messages`, {
+            headers: { 'Authorization': `Bearer ${activeToken}` }
+        });
+        const data = await res.json();
+        const messages = data["hydra:member"];
+        list.innerHTML = messages.length ? "" : "<p style='color:#555; text-align:center;'>Inbox Empty</p>";
+        messages.forEach(msg => {
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<strong>From: ${msg.from.address}</strong><br><small>${msg.subject}</small>`;
+            div.onclick = () => showMessageBody(msg.id);
+            list.appendChild(div);
+        });
+    }
+
+    async function showMessageBody(id) {
+        const res = await fetch(`${API}/messages/${id}`, {
+            headers: { 'Authorization': `Bearer ${activeToken}` }
+        });
+        const data = await res.json();
+        const text = data.text || data.intro;
+        const codeMatch = text.match(/\b\d{4,6}\b/);
+        alert(`MESSAGE CONTENT:\n\n${text}\n\nFound Code: ${codeMatch ? codeMatch[0] : 'None'}`);
+    }
+
+    function closeInbox() {
+        document.getElementById('reader').classList.add('hidden');
+        document.getElementById('main-view').classList.remove('hidden');
+    }
+
+    function copyText(val) {
+        navigator.clipboard.writeText(val);
+        alert("Copied!");
+    }
+</script>
+</body>
+</html>
